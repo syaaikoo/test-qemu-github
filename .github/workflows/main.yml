@@ -1,0 +1,64 @@
+name: Debian 13 KVM via Cloudflare Quick Tunnel
+
+on: 
+  # Anda dapat memulai workflow ini secara manual dari tab Actions di GitHub
+  workflow_dispatch: 
+
+jobs:
+  run-vm:
+    # Memerlukan runner Linux yang mendukung KVM (ubuntu-latest sudah mendukung)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check Out Kode
+        uses: actions/checkout@v4
+
+      - name: Unduh ISO Debian 13
+        # Menggunakan link yang Anda berikan
+        run: wget -O debian.iso https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.2.0-amd64-netinst.iso
+
+      - name: Instal cloudflared
+        # Mengunduh dan menginstal binary cloudflared
+        run: |
+          echo "--- MENGINSTAL CLOUDFLARED ---"
+          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+      - name: Set Up Cloudflare Quick Tunnel
+        # Port VNC (5900) diekspos ke URL publik sementara
+        run: |
+          echo "--- MEMULAI CLOUDFLARE QUICK TUNNEL ---"
+          
+          # Jalankan cloudflared di background dan buat tunnel ke port VNC (5900)
+          /usr/local/bin/cloudflared tunnel run --url tcp://127.0.0.1:5900 &> cloudflared.log &
+          
+          # Beri waktu tunnel untuk terhubung dan mencatat URL
+          sleep 15
+          
+          # Ambil URL publik dari log cloudflared (formatnya mirip https://[random].trycloudflare.com)
+          TUNNEL_URL=$(grep "cloudflared will proxy requests from" cloudflared.log | awk '{print $NF}' | tr -d '\n\r')
+          
+          # Tampilkan URL sebagai notifikasi penting di log GitHub Actions
+          echo "::notice file=URL.txt::URL AKSES VNC ANDA: $TUNNEL_URL"
+          echo "=========================================================="
+          echo "  URL AKSES VNC ANDA (Copy link ini):"
+          echo "  $TUNNEL_URL"
+          echo "=========================================================="
+          
+          # Simpan URL
+          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+          
+          sleep 5
+
+      - name: Jalankan VM QEMU/KVM dengan Debian ISO
+        # Action utama yang menjalankan mesin virtual
+        uses: etchdroid/qemu-kvm-action@v1
+        with:
+          image: debian.iso 
+          ram: 4G 
+          cpu: 2
+          vnc: 5900 # QEMU membuka VNC di port ini
+          screen-recording: true
+          # VM dan Tunnel akan berjalan selama 1 jam (3600 detik)
+          sleep: 3600

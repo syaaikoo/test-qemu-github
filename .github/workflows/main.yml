@@ -1,44 +1,28 @@
-name: Debian 13 NoVNC (Disk Fixed)
+name: Debian 13 NoVNC (Disk Fixed 30GB)
 
-on:
-  workflow_dispatch:
+on: 
+  workflow_dispatch: 
 
 jobs:
   run-vm:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: 🛠️ 1. Persiapan & Install QEMU + NoVNC
+      - name: 1. Install QEMU + NoVNC
         run: |
-          echo "============================================="
-          echo "🟢 Installing QEMU, NoVNC & dependencies..."
-          echo "============================================="
           sudo apt-get update
           sudo apt-get install -y qemu-kvm qemu-utils novnc websockify
           sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
-          echo "✅ Installation completed!"
-          echo ""
 
-      - name: 💾 2. Unduh ISO Debian 13 & Buat Disk Virtual
+      - name: 2. Unduh ISO Debian 13 & Buat Disk Virtual 30GB
         run: |
-          echo "============================================="
-          echo "💿 Membuat Disk Virtual 40GB..."
-          echo "============================================="
-          qemu-img create -f qcow2 debian_disk.qcow2 45G
-          echo "✅ Disk virtual siap!"
-
-          echo "============================================="
-          echo "🌐 Mengunduh ISO Debian 13..."
-          echo "============================================="
+          qemu-img create -f qcow2 debian_disk.qcow2 30G
           wget -O debian.iso https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.2.0-amd64-netinst.iso
-          echo "✅ ISO berhasil diunduh!"
-          echo ""
 
-      - name: 🚀 3. Jalankan QEMU (Background)
+      - name: 3. Jalankan QEMU (Background) dengan Disk SATA
         run: |
-          echo "============================================="
-          echo "⚡ Starting QEMU with VirtIO disk..."
-          echo "============================================="
+          # Menggunakan if=sata untuk emulasi disk yang kompatibel dengan installer Debian
+          # yang tidak memuat driver virtio secara default. 
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -cpu host \
@@ -46,55 +30,42 @@ jobs:
             -m 4G \
             -drive file=debian.iso,media=cdrom \
             -boot d \
-            -drive file=debian_disk.qcow2,if=virtio \
+            -drive file=debian_disk.qcow2,if=sata,index=0 \
             -net nic,model=virtio -net user \
             -vnc :0 \
             -device virtio-rng-pci \
             -daemonize \
             -display none
-          echo "✅ QEMU berjalan di VNC :0 (Port 5900)"
-          echo ""
+          
+          echo "QEMU berjalan di VNC :0 (Port 5900)"
 
-      - name: 🌐 4. Jalankan NoVNC / Websockify (Background)
-        run: |
-          echo "============================================="
-          echo "🔗 Menjalankan NoVNC pada port 6080..."
-          echo "============================================="
-          websockify --web=/usr/share/novnc/ 6080 localhost:5900 &
-          echo "✅ NoVNC siap diakses!"
-          echo ""
+      - name: 4. Jalankan NoVNC / Websockify (Background)
+        run: websockify --web=/usr/share/novnc/ 6080 localhost:5900 &
 
-      - name: 🔒 5. Start Cloudflare Tunnel & Generate URL
+      - name: 5. Start Cloudflare Tunnel & Generate URL
         run: |
-          echo "============================================="
-          echo "🌉 Menjalankan Cloudflare Tunnel..."
-          echo "============================================="
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
           cloudflared tunnel --url http://127.0.0.1:6080 > cloudflared.log 2>&1 &
           sleep 10
-
+          
           TUNNEL_URL=$(grep -o 'https://[^ ]*.trycloudflare.com' cloudflared.log | head -n 1)
-
+          
           if [ -z "$TUNNEL_URL" ]; then
             echo "::error::Gagal ambil URL. Cek log:"
             cat cloudflared.log
             exit 1
           fi
-
-          echo "✅ Tunnel aktif!"
-          echo "🌐 Akses browser di sini: $TUNNEL_URL"
+          
           echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-          echo ""
+          echo "::notice::Akses Browser Di Sini: $TUNNEL_URL"
 
-      - name: ⏳ 6. Keep Alive (6 Jam)
+      - name: 6. Keep Alive (6 Jam)
         run: |
-          echo "============================================="
-          echo "⏱️ Menjaga VM tetap hidup selama 6 jam..."
-          echo "============================================="
-          echo "✅ Hard disk sudah dilampirkan."
-          echo "🌐 Buka link ini di browser: ${{ env.TUNNEL_URL }}"
-          echo "============================================="
+          echo "======================================================"
+          echo "  ✅ SUKSES! Hard disk sudah dilampirkan sebagai SATA."
+          echo "  Buka link ini di browser Anda: ${{ env.TUNNEL_URL }}"
+          echo "======================================================"
           sleep 21600

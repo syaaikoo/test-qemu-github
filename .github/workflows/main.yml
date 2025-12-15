@@ -1,4 +1,4 @@
-name: Debian 13 KVM Fixed (No Token)
+name: Debian 13 NoVNC (Browser Accessible)
 
 on: 
   workflow_dispatch: 
@@ -8,66 +8,76 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Check Out Kode
-        uses: actions/checkout@v4
+      - name: 1. Persiapan & Install QEMU + NoVNC
+        # Kita install manual agar lebih fleksibel daripada menggunakan Action wrapper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-kvm qemu-utils novnc websockify
+          
+          # Fix agar NoVNC bisa diakses tanpa mengetik /vnc.html
+          sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
-      - name: Unduh ISO Debian 13
+      - name: 2. Unduh ISO Debian 13
         run: wget -O debian.iso https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.2.0-amd64-netinst.iso
 
-      - name: Instal cloudflared
+      - name: 3. Jalankan QEMU (Background)
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared-linux-amd64
-          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-
-      - name: Set Up Cloudflare Quick Tunnel (FIXED)
-        id: tunnel_setup
-        run: |
-          echo "--- MEMULAI CLOUDFLARE QUICK TUNNEL ---"
-          
-          # PERBAIKAN: Menghapus kata 'run'. 
-          # Menggunakan syntax '--url' langsung untuk Quick Tunnel.
-          # Menggunakan '2>&1' untuk memastikan error log juga tertangkap jika ada.
-          /usr/local/bin/cloudflared tunnel --url tcp://127.0.0.1:5900 > cloudflared.log 2>&1 &
-          
-          # Tunggu 15 detik agar tunnel connect
-          sleep 15
-          
-          # Debug: Tampilkan 20 baris pertama log untuk memastikan tunnel jalan
-          echo "--- Pengecekan Log Awal ---"
-          head -n 20 cloudflared.log
-          
-          # Ambil URL. Cloudflared kadang memberikan output .trycloudflare.com
-          TUNNEL_URL=$(grep -o 'https://[^ ]*.trycloudflare.com' cloudflared.log | head -n 1)
-          
-          if [ -z "$TUNNEL_URL" ]; then
-            echo "::error::Gagal mendapatkan URL! Cek log di bawah:"
-            cat cloudflared.log
-            exit 1
-          fi
-          
-          echo "::notice::URL AKSES VNC ANDA: $TUNNEL_URL"
-          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-
-      - name: Jalankan VM QEMU/KVM (6 Jam)
-        uses: etchdroid/qemu-kvm-action@v1
-        with:
-          # Kita gunakan 'run' manual agar parameter QEMU pasti benar
-          run: |
-            echo "--- MEMULAI QEMU ---"
-            echo "Akses URL ini di browser/VNC client: ${{ env.TUNNEL_URL }}"
-            
-            # Menjalankan QEMU
-            /usr/bin/qemu-system-x86_64 \
+          echo "--- STARTING QEMU ---"
+          # Jalankan QEMU di background dengan VNC di port 5900 (display :0)
+          sudo qemu-system-x86_64 \
             -enable-kvm \
             -cpu host \
             -smp 2 \
             -m 4G \
-            -display vnc=:0 \
-            -cdrom debian.iso \
+            -drive file=debian.iso,media=cdrom \
             -boot d \
-            -device virtio-rng-pci &
-            
-            # Loop keep-alive selama 6 jam (21600 detik)
-            echo "VM Berjalan. Jangan tutup tab ini jika ingin melihat log."
-            sleep 21600
+            -vnc :0 \
+            -device virtio-rng-pci \
+            -daemonize \
+            -display none
+          
+          echo "QEMU berjalan di VNC :0 (Port 5900)"
+
+      - name: 4. Jalankan NoVNC / Websockify (Background)
+        run: |
+          echo "--- STARTING NOVNC ---"
+          # Websockify menerjemahkan WebSocket (Browser) ke TCP (VNC)
+          # Port 6080 (HTTP) -> Port 5900 (VNC)
+          websockify --web=/usr/share/novnc/ 6080 localhost:5900 &
+          
+          echo "NoVNC berjalan di Port 6080"
+
+      - name: 5. Start Cloudflare Tunnel & Generate URL
+        run: |
+          # Install Cloudflared
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+          echo "--- STARTING TUNNEL ---"
+          # PENTING: Kita men-tunnel Port 6080 (NoVNC HTTP), BUKAN 5900!
+          cloudflared tunnel --url http://127.0.0.1:6080 > cloudflared.log 2>&1 &
+          
+          sleep 10
+          
+          # Ambil URL
+          TUNNEL_URL=$(grep -o 'https://[^ ]*.trycloudflare.com' cloudflared.log | head -n 1)
+          
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "::error::Gagal ambil URL. Cek log:"
+            cat cloudflared.log
+            exit 1
+          fi
+          
+          echo "::notice::Akses Browser Di Sini: $TUNNEL_URL"
+          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+
+      - name: 6. Keep Alive (6 Jam)
+        run: |
+          echo "======================================================"
+          echo "  ✅ SUKSES!"
+          echo "  Buka link ini di browser HP/Laptop Anda:"
+          echo "  ${{ env.TUNNEL_URL }}"
+          echo "======================================================"
+          echo "VM akan tetap hidup selama 6 jam."
+          sleep 21600

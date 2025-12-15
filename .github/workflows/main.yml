@@ -1,4 +1,4 @@
-name: Debian 13 NoVNC (Disk Fixed 30GB)
+name: Debian 13 NoVNC (Disk Dinamis Maksimum)
 
 on: 
   workflow_dispatch: 
@@ -14,15 +14,34 @@ jobs:
           sudo apt-get install -y qemu-kvm qemu-utils novnc websockify
           sudo ln -s /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
-      - name: 2. Unduh ISO Debian 13 & Buat Disk Virtual 30GB
+      - name: 2. Hitung & Buat Disk Virtual Dinamis
         run: |
-          qemu-img create -f qcow2 debian_disk.qcow2 30G
+          # 1. Mengukur ruang disk yang tersedia (dalam KB) di direktori kerja
+          DISK_AVAILABLE_KB=$(df --output=avail -k . | tail -n 1)
+          
+          # 2. Menghitung 98% dari ruang tersedia (untuk keamanan/margin error)
+          # Mengalokasikan 98% dari ruang yang tersedia, dalam Megabyte (MB)
+          DISK_SIZE_MB=$(( (DISK_AVAILABLE_KB * 98) / 102400 ))
+          
+          # 3. Memastikan ukuran minimal 10GB (10240 MB) jika ruang host kecil
+          MIN_SIZE_MB=10240
+          if [ $DISK_SIZE_MB -lt $MIN_SIZE_MB ]; then
+              DISK_SIZE_MB=$MIN_SIZE_MB
+          fi
+
+          echo "--- MEMBUAT DISK VIRTUAL ${DISK_SIZE_MB}MB ---"
+          # Membuat file disk virtual dengan ukuran yang dihitung
+          qemu-img create -f qcow2 debian_disk.qcow2 ${DISK_SIZE_MB}M
+          
+          echo "DISK_SIZE_MB=${DISK_SIZE_MB}MB" >> $GITHUB_ENV
+          
+          # Unduh ISO Debian
           wget -O debian.iso https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.2.0-amd64-netinst.iso
 
       - name: 3. Jalankan QEMU (Background) dengan Disk SATA
         run: |
-          # Menggunakan if=sata untuk emulasi disk yang kompatibel dengan installer Debian
-          # yang tidak memuat driver virtio secara default. 
+          # Disk menggunakan if=sata untuk kompatibilitas installer
+          echo "QEMU akan menggunakan disk berukuran ${{ env.DISK_SIZE_MB }}"
           sudo qemu-system-x86_64 \
             -enable-kvm \
             -cpu host \
@@ -65,7 +84,7 @@ jobs:
       - name: 6. Keep Alive (6 Jam)
         run: |
           echo "======================================================"
-          echo "  ✅ SUKSES! Hard disk sudah dilampirkan sebagai SATA."
+          echo "  ✅ SUKSES! Disk berukuran ${{ env.DISK_SIZE_MB }} dialokasikan."
           echo "  Buka link ini di browser Anda: ${{ env.TUNNEL_URL }}"
           echo "======================================================"
           sleep 21600
